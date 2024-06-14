@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import statsmodels.api as sm
 from statsmodels.stats.diagnostic import het_breuschpagan, acorr_ljungbox
 from streamlit_option_menu import option_menu
+from scipy.stats import f  # Import the 'f' function from scipy.stats
 
 # Fungsi untuk mengupload file
 def upload_file():
@@ -151,8 +152,34 @@ def page_analisis_panel(df):
             results = panel_regression(df, predictors, response, entity_col, time_col, model_type)
             
             st.subheader("Pemilihan Model Regresi")
-            additional_tests = st.multiselect("Pilih uji", ["Uji Hausman", "Uji LM"])
+            additional_tests = st.multiselect("Pilih uji", ["Uji Chow", "Uji Hausman", "Uji LM"])
             
+            if "Uji Chow" in additional_tests and model_type == "FEM":
+                # Panel regression with Fixed Effects (FEM)
+                model_fem = PanelOLS(df[response], sm.add_constant(df[predictors]), entity_effects=True).fit()
+                
+                # Panel regression with Common Effects (CEM)
+                model_cem = PanelOLS(df[response], sm.add_constant(df[predictors])).fit()
+                
+                # Hitung residual sum of squares (SSR) untuk kedua model
+                ssr_cem = np.sum(model_cem.resids ** 2)
+                ssr_fem = np.sum(model_fem.resids ** 2)
+                
+                # Total jumlah observasi dan jumlah parameter
+                n = len(df)
+                k = sm.add_constant(df[predictors]).shape[1] - 1  # Tidak termasuk intercept
+                m = df.index.get_level_values(entity_col).nunique()
+                
+                # Hitung statistik uji Chow
+                chow_stat = ((ssr_cem - ssr_fem) / (m - 1)) / (ssr_fem / (n - m - k))
+                
+                # Bandingkan dengan distribusi F
+                p_value = 1 - f.cdf(chow_stat, m - 1, n - m - k)
+                
+                # Tampilkan hasil
+                st.subheader("Uji Chow")
+                st.write(f"Chow Test - F statistic: {chow_stat}, p-value: {p_value}")
+                
             if "Uji Hausman" in additional_tests:
                 fixed_model = PanelOLS(df[response], df[predictors], entity_effects=True).fit()
                 random_model = RandomEffects(df[response], df[predictors]).fit()
@@ -161,7 +188,7 @@ def page_analisis_panel(df):
             if "Uji LM" in additional_tests:
                 pooled_model = PooledOLS(df[response], sm.add_constant(df[predictors])).fit()
                 random_model = RandomEffects(df[response], df[predictors]).fit()
-                lm_test(pooled_model, random_model)
+                lm_test(pooled_model, random_model)        
 
 # Fungsi untuk halaman pemeriksaan asumsi IIDN
 def page_pemeriksaan_asumsi(df):
@@ -183,29 +210,27 @@ def page_pemeriksaan_asumsi(df):
             model = sm.OLS(y, X).fit()
             residuals = model.resid
             
-            # Asumsi Heteroskedastisitas (Identik)
+            # Asumsi Heteroskedastisitas (Breusch-Pagan)
             st.subheader("Asumsi Heteroskedastisitas")
-            st.write("Hasil pengujian asumsi identik.")
+            st.write("Hasil pengujian asumsi heteroskedastisitas.")
             het_bp = het_breuschpagan(residuals, X)
-            st.write(f"LM Statistic: {het_bp[0]}")
-            st.write(f"LM-Test P-value: {het_bp[1]}")
-            st.write(f"F-Statistic: {het_bp[2]}")
-            st.write(f"F-Test P-value: {het_bp[3]}")
+            st.write(f"Breusch-Pagan LM Statistic: {het_bp[0]}")
+            st.write(f"Breusch-Pagan LM-Test P-value: {het_bp[1]}")
+            st.write(f"Breusch-Pagan F-Statistic: {het_bp[2]}")
+            st.write(f"Breusch-Pagan F-Test P-value: {het_bp[3]}")
             
-            # Asumsi Autokorelasi (Independen)
+            # Asumsi Autokorelasi (Durbin-Watson)
             st.subheader("Asumsi Autokorelasi")
-            st.write("Hasil pengujian asumsi independen.")
-            acorr_lb = acorr_ljungbox(residuals, lags=[10], boxpierce=True)
-            st.write(f"Ljung-Box Statistic: {acorr_lb['lb_stat'].iloc[0]}")
-            st.write(f"Ljung-Box P-value: {acorr_lb['lb_pvalue'].iloc[0]}")
-            st.write(f"Box-Pierce Statistic: {acorr_lb['bp_stat'].iloc[0]}")
-            st.write(f"Box-Pierce P-value: {acorr_lb['bp_pvalue'].iloc[0]}")
+            st.write("Hasil pengujian asumsi autokorelasi menggunakan Durbin-Watson.")
+            durbin_watson_statistic = sm.stats.stattools.durbin_watson(residuals)
+            st.write(f"Durbin-Watson Statistic: {durbin_watson_statistic}")
             
-            # Asumsi Distribusi Normal
+            # Asumsi Distribusi Normal (Kolmogorov-Smirnov)
             st.subheader("Asumsi Distribusi Normal")
             st.write("Hasil pengujian asumsi distribusi normal.")
-            _, pval = stats.normaltest(residuals)
-            st.write(f"Normality Test P-value: {pval}")
+            ks_statistic, ks_pvalue = stats.kstest(residuals, 'norm')
+            st.write(f"Kolmogorov-Smirnov Statistic: {ks_statistic}")
+            st.write(f"Kolmogorov-Smirnov P-value: {ks_pvalue}")
 
 # Fungsi utama untuk navigasi sidebar
 def main():
